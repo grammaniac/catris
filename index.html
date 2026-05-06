@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Catris</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: #0a0a14;
+    color: #ddd;
+    font-family: 'Apple SD Gothic Neo', system-ui, sans-serif;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+  }
+  .game { display: flex; gap: 24px; padding: 24px; }
+  canvas#board {
+    background: #14141e;
+    border: 2px solid #2a2a3a;
+    border-radius: 6px;
+  }
+  .sidebar { width: 220px; display: flex; flex-direction: column; gap: 14px; }
+  h1 { margin: 0; color: #ffc8dc; font-size: 38px; letter-spacing: 2px; }
+  .stat { font-size: 18px; }
+  .stat .label { color: #888; margin-right: 8px; }
+  .stat .val { color: #fff; font-weight: 600; }
+  canvas#next {
+    background: #14141e;
+    border: 1px solid #2a2a3a;
+    border-radius: 4px;
+    width: 160px;
+    height: 120px;
+  }
+  .controls {
+    margin-top: auto; font-size: 13px; color: #999; line-height: 1.9;
+  }
+  kbd {
+    background: #2a2a3a; border: 1px solid #444; border-radius: 3px;
+    padding: 1px 6px; color: #ddd; font-family: inherit; font-size: 12px;
+  }
+  .next-label { color: #888; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="game">
+  <canvas id="board" width="320" height="640"></canvas>
+  <div class="sidebar">
+    <h1>Catris</h1>
+    <div class="stat"><span class="label">Score</span><span class="val" id="score">0</span></div>
+    <div class="stat"><span class="label">Lines</span><span class="val" id="lines">0</span></div>
+    <div class="stat"><span class="label">Level</span><span class="val" id="level">1</span></div>
+    <div class="next-label">Next</div>
+    <canvas id="next" width="160" height="120"></canvas>
+    <div class="controls">
+      <kbd>←</kbd> <kbd>→</kbd> 이동<br>
+      <kbd>↑</kbd> / <kbd>X</kbd> 회전<br>
+      <kbd>Z</kbd> 반대 회전<br>
+      <kbd>↓</kbd> 소프트 드롭<br>
+      <kbd>Space</kbd> 하드 드롭<br>
+      <kbd>P</kbd> 일시정지 / <kbd>R</kbd> 재시작
+    </div>
+  </div>
+</div>
+<script>
+const COLS = 10, ROWS = 20, BLOCK = 32;
+
+const SHAPES = {
+  I: [[[0,1],[1,1],[2,1],[3,1]],[[2,0],[2,1],[2,2],[2,3]],
+      [[0,2],[1,2],[2,2],[3,2]],[[1,0],[1,1],[1,2],[1,3]]],
+  O: [[[1,0],[2,0],[1,1],[2,1]]],
+  T: [[[1,0],[0,1],[1,1],[2,1]],[[1,0],[1,1],[2,1],[1,2]],
+      [[0,1],[1,1],[2,1],[1,2]],[[1,0],[0,1],[1,1],[1,2]]],
+  S: [[[1,0],[2,0],[0,1],[1,1]],[[1,0],[1,1],[2,1],[2,2]],
+      [[1,1],[2,1],[0,2],[1,2]],[[0,0],[0,1],[1,1],[1,2]]],
+  Z: [[[0,0],[1,0],[1,1],[2,1]],[[2,0],[1,1],[2,1],[1,2]],
+      [[0,1],[1,1],[1,2],[2,2]],[[1,0],[0,1],[1,1],[0,2]]],
+  L: [[[2,0],[0,1],[1,1],[2,1]],[[1,0],[1,1],[1,2],[2,2]],
+      [[0,1],[1,1],[2,1],[0,2]],[[0,0],[1,0],[1,1],[1,2]]],
+  J: [[[0,0],[0,1],[1,1],[2,1]],[[1,0],[2,0],[1,1],[1,2]],
+      [[0,1],[1,1],[2,1],[2,2]],[[1,0],[1,1],[0,2],[1,2]]],
+};
+
+const COLORS = {
+  I: '#66d9ef', O: '#fdcb6e', T: '#a29bfe',
+  S: '#55efc4', Z: '#ff7675', L: '#fab1a0', J: '#74b9ff',
+};
+
+const ctx = document.getElementById('board').getContext('2d');
+const nextCtx = document.getElementById('next').getContext('2d');
+
+let catImg = null;
+const sprites = {};
+
+function makeProceduralSprite(color, size) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const cx = c.getContext('2d');
+  cx.fillStyle = color;
+  cx.fillRect(0, 0, size, size);
+  cx.beginPath();
+  cx.moveTo(size*0.2, size*0.33);
+  cx.lineTo(size*0.33, size*0.1);
+  cx.lineTo(size*0.5, size*0.33);
+  cx.closePath(); cx.fill();
+  cx.beginPath();
+  cx.moveTo(size*0.5, size*0.33);
+  cx.lineTo(size*0.66, size*0.1);
+  cx.lineTo(size*0.8, size*0.33);
+  cx.closePath(); cx.fill();
+  cx.fillStyle = '#fff5e6';
+  cx.beginPath();
+  cx.arc(size/2, size/2 + 2, size/3, 0, Math.PI*2);
+  cx.fill();
+  cx.fillStyle = '#222';
+  cx.beginPath();
+  cx.arc(size*0.4, size*0.5, Math.max(2, size/12), 0, Math.PI*2);
+  cx.fill();
+  cx.beginPath();
+  cx.arc(size*0.6, size*0.5, Math.max(2, size/12), 0, Math.PI*2);
+  cx.fill();
+  cx.fillStyle = '#ff6e8c';
+  cx.beginPath();
+  cx.moveTo(size/2 - 3, size*0.62);
+  cx.lineTo(size/2 + 3, size*0.62);
+  cx.lineTo(size/2, size*0.7);
+  cx.closePath(); cx.fill();
+  cx.strokeStyle = '#1c1c28';
+  cx.lineWidth = 2;
+  cx.strokeRect(1, 1, size-2, size-2);
+  return c;
+}
+
+function makePhotoSprite(color, size, img) {
+  const c = document.createElement('canvas');
+  c.width = c.height = size;
+  const cx = c.getContext('2d');
+  cx.drawImage(img, 0, 0, size, size);
+  cx.globalCompositeOperation = 'multiply';
+  cx.fillStyle = color;
+  cx.globalAlpha = 0.45;
+  cx.fillRect(0, 0, size, size);
+  cx.globalAlpha = 1;
+  cx.globalCompositeOperation = 'source-over';
+  cx.strokeStyle = color;
+  cx.lineWidth = 2;
+  cx.strokeRect(1, 1, size-2, size-2);
+  return c;
+}
+
+function buildSprites() {
+  for (const k in SHAPES) {
+    sprites[k] = catImg
+      ? makePhotoSprite(COLORS[k], BLOCK, catImg)
+      : makeProceduralSprite(COLORS[k], BLOCK);
+  }
+}
+
+function loadCat() {
+  return new Promise(resolve => {
+    const img = new Image();
+    img.onload = () => { catImg = img; resolve(); };
+    img.onerror = () => resolve();
+    img.src = 'cat.png';
+  });
+}
+
+let grid, current, next, score, lines, level, fallTime, gameOver, paused, flashRows, flashTimer, bag;
+
+function newPiece() {
+  if (bag.length === 0) {
+    bag = Object.keys(SHAPES);
+    for (let i = bag.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [bag[i], bag[j]] = [bag[j], bag[i]];
+    }
+  }
+  return { kind: bag.pop(), rot: 0, x: Math.floor(COLS/2) - 2, y: 0 };
+}
+
+function cellsOf(p, x, y, rot) {
+  const px = x ?? p.x, py = y ?? p.y, r = rot ?? p.rot;
+  const shape = SHAPES[p.kind];
+  const idx = ((r % shape.length) + shape.length) % shape.length;
+  return shape[idx].map(([cx, cy]) => [px+cx, py+cy]);
+}
+
+function collides(p, dx, dy, rot) {
+  const x = p.x + (dx || 0), y = p.y + (dy || 0);
+  for (const [cx, cy] of cellsOf(p, x, y, rot)) {
+    if (cx < 0 || cx >= COLS || cy >= ROWS) return true;
+    if (cy >= 0 && grid[cy][cx]) return true;
+  }
+  return false;
+}
+
+function lockPiece() {
+  for (const [cx, cy] of cellsOf(current)) {
+    if (cy >= 0 && cy < ROWS && cx >= 0 && cx < COLS) grid[cy][cx] = current.kind;
+  }
+  const cleared = [];
+  for (let r = 0; r < ROWS; r++) if (grid[r].every(v => v)) cleared.push(r);
+  if (cleared.length) {
+    flashRows = cleared;
+    flashTimer = 240;
+  } else {
+    afterLock([]);
+  }
+}
+
+function afterLock(cleared) {
+  cleared.sort((a, b) => a - b);
+  for (const r of cleared) {
+    grid.splice(r, 1);
+    grid.unshift(new Array(COLS).fill(null));
+  }
+  const scores = {1: 100, 2: 300, 3: 500, 4: 800};
+  score += (scores[cleared.length] || 0) * level;
+  lines += cleared.length;
+  level = 1 + Math.floor(lines / 10);
+  current = next;
+  next = newPiece();
+  if (collides(current)) gameOver = true;
+  updateHUD();
+}
+
+function stepGravity() {
+  if (!collides(current, 0, 1)) current.y++;
+  else lockPiece();
+}
+
+function hardDrop() {
+  while (!collides(current, 0, 1)) { current.y++; score += 2; }
+  lockPiece();
+  updateHUD();
+}
+
+function tryMove(dx) {
+  if (!collides(current, dx, 0)) current.x += dx;
+}
+
+function tryRotate(dr) {
+  const newRot = current.rot + dr;
+  for (const k of [0, -1, 1, -2, 2]) {
+    if (!collides(current, k, 0, newRot)) {
+      current.x += k;
+      current.rot = newRot;
+      return;
+    }
+  }
+}
+
+function reset() {
+  grid = Array.from({length: ROWS}, () => new Array(COLS).fill(null));
+  bag = [];
+  score = 0; lines = 0; level = 1;
+  fallTime = 0; gameOver = false; paused = false;
+  flashRows = []; flashTimer = 0;
+  current = newPiece();
+  next = newPiece();
+  updateHUD();
+}
+
+function fallSpeedMs() {
+  return Math.max(80, 500 - (level - 1) * 40);
+}
+
+function updateHUD() {
+  document.getElementById('score').textContent = score;
+  document.getElementById('lines').textContent = lines;
+  document.getElementById('level').textContent = level;
+}
+
+function drawBoard() {
+  ctx.fillStyle = '#14141e';
+  ctx.fillRect(0, 0, COLS*BLOCK, ROWS*BLOCK);
+  ctx.strokeStyle = '#22223a';
+  ctx.lineWidth = 1;
+  for (let c = 0; c <= COLS; c++) {
+    ctx.beginPath();
+    ctx.moveTo(c*BLOCK + 0.5, 0);
+    ctx.lineTo(c*BLOCK + 0.5, ROWS*BLOCK);
+    ctx.stroke();
+  }
+  for (let r = 0; r <= ROWS; r++) {
+    ctx.beginPath();
+    ctx.moveTo(0, r*BLOCK + 0.5);
+    ctx.lineTo(COLS*BLOCK, r*BLOCK + 0.5);
+    ctx.stroke();
+  }
+  const flashOn = flashRows.length && Math.floor(flashTimer / 60) % 2 === 0;
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (!grid[r][c]) continue;
+      if (flashRows.includes(r) && flashOn) {
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(c*BLOCK, r*BLOCK, BLOCK, BLOCK);
+      } else {
+        ctx.drawImage(sprites[grid[r][c]], c*BLOCK, r*BLOCK);
+      }
+    }
+  }
+  if (!flashRows.length && !gameOver) {
+    let gy = 1;
+    while (!collides(current, 0, gy)) gy++;
+    gy--;
+    if (gy > 0) {
+      ctx.strokeStyle = 'rgba(180,180,210,0.55)';
+      ctx.lineWidth = 2;
+      for (const [cx, cy] of cellsOf(current)) {
+        const y = cy + gy;
+        if (y >= 0) ctx.strokeRect(cx*BLOCK + 2, y*BLOCK + 2, BLOCK - 4, BLOCK - 4);
+      }
+    }
+  }
+  if (!flashRows.length) {
+    for (const [cx, cy] of cellsOf(current)) {
+      if (cy >= 0) ctx.drawImage(sprites[current.kind], cx*BLOCK, cy*BLOCK);
+    }
+  }
+  if (paused || gameOver) {
+    ctx.fillStyle = 'rgba(0,0,0,0.72)';
+    ctx.fillRect(0, 0, COLS*BLOCK, ROWS*BLOCK);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 36px system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText(gameOver ? 'GAME OVER' : 'PAUSED', COLS*BLOCK/2, ROWS*BLOCK/2);
+    if (gameOver) {
+      ctx.font = '18px system-ui';
+      ctx.fillText('R 키로 재시작', COLS*BLOCK/2, ROWS*BLOCK/2 + 36);
+    }
+  }
+}
+
+function drawNext() {
+  nextCtx.fillStyle = '#14141e';
+  nextCtx.fillRect(0, 0, 160, 120);
+  const shape = SHAPES[next.kind][0];
+  const xs = shape.map(s => s[0]), ys = shape.map(s => s[1]);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const w = (maxX - minX + 1) * BLOCK, h = (maxY - minY + 1) * BLOCK;
+  const ox = (160 - w)/2 - minX*BLOCK;
+  const oy = (120 - h)/2 - minY*BLOCK;
+  for (const [cx, cy] of shape) {
+    nextCtx.drawImage(sprites[next.kind], ox + cx*BLOCK, oy + cy*BLOCK);
+  }
+}
+
+document.addEventListener('keydown', e => {
+  if (gameOver) {
+    if (e.key === 'r' || e.key === 'R') reset();
+    return;
+  }
+  if (e.key === 'p' || e.key === 'P') { paused = !paused; return; }
+  if (paused || flashRows.length) return;
+  switch (e.key) {
+    case 'ArrowLeft': tryMove(-1); break;
+    case 'ArrowRight': tryMove(1); break;
+    case 'ArrowDown': stepGravity(); score++; updateHUD(); break;
+    case 'ArrowUp': case 'x': case 'X': tryRotate(1); break;
+    case 'z': case 'Z': tryRotate(-1); break;
+    case ' ': hardDrop(); e.preventDefault(); break;
+  }
+});
+
+let last = 0;
+function loop(t) {
+  const dt = t - last;
+  last = t;
+  if (!gameOver && !paused) {
+    if (flashRows.length) {
+      flashTimer -= dt;
+      if (flashTimer <= 0) {
+        const c = flashRows;
+        flashRows = [];
+        afterLock(c);
+      }
+    } else {
+      fallTime += dt;
+      if (fallTime >= fallSpeedMs()) {
+        fallTime = 0;
+        stepGravity();
+      }
+    }
+  }
+  drawBoard();
+  drawNext();
+  requestAnimationFrame(loop);
+}
+
+(async () => {
+  await loadCat();
+  buildSprites();
+  reset();
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
